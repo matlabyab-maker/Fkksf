@@ -2,7 +2,9 @@ name: Android APK
 
 on:
   push:
-    branches: ["master", "main"]
+    branches:
+      - master
+      - main
   workflow_dispatch:
 
 permissions:
@@ -12,10 +14,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository and latest commit
+      - name: Checkout the pushed commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Show exact commit being built
+        run: |
+          echo "Commit: $(git rev-parse HEAD)"
+          git log -1 --oneline
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -23,21 +30,21 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
+      # Explicitly exclude the obsolete SDK package named "tools".
+      - name: Set up Android command-line tools
         uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
 
-      - name: Install Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Install required SDK packages
+        run: |
+          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --licenses >/dev/null
 
       - name: Install Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
-
-      - name: Show source commit
-        run: |
-          echo "Commit being built: $(git rev-parse HEAD)"
-          git log -1 --oneline
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
