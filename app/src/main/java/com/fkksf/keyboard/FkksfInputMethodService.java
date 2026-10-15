@@ -1,252 +1,175 @@
 package com.fkksf.keyboard;
 
 import android.inputmethodservice.InputMethodService;
-import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
-import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.View;
-import android.view.inputmethod.InputConnection;
+import android.inputmethodservice.Keyboard;
+import android.inputmethodservice.KeyboardView;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.EditorInfo;
+import android.view.KeyEvent;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 import java.util.ArrayDeque;
-import java.util.Deque;
 
 public class FkksfInputMethodService extends InputMethodService {
+    private LinearLayout root, toolsRow, keysArea;
+    private boolean persian = true, symbols = false, shifted = false;
+    private String lastDeleted = "";
+    private final ArrayDeque<String> undo = new ArrayDeque<>();
+    private final ArrayDeque<String> redo = new ArrayDeque<>();
+    private int dp(float n) { return (int)(n * getResources().getDisplayMetrics().density + .5f); }
 
-    private boolean persian = true;
-    private LinearLayout keyboard;
+    @Override public View onCreateInputView() {
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(3), dp(3), dp(3), dp(4));
+        root.setBackgroundColor(Color.rgb(17,24,39));
 
-    private final Deque<Edit> undoStack = new ArrayDeque<>();
-    private final Deque<Edit> redoStack = new ArrayDeque<>();
-
-    private static class Edit {
-        String before;
-        String after;
-
-        Edit(String b, String a) {
-            before = b;
-            after = a;
+        toolsRow = new LinearLayout(this);
+        toolsRow.setOrientation(LinearLayout.HORIZONTAL);
+        toolsRow.setGravity(Gravity.CENTER);
+        String[] labels = {"Paste","Copy","Undo","Redo","←","→","↑","↓","زبان"};
+        int[] colors = {0xff0f766e,0xff2563eb,0xff7c3aed,0xff9333ea,0xff475569,0xff475569,0xff475569,0xff475569,0xffb45309};
+        for (int i=0;i<labels.length;i++) {
+            final String action = labels[i];
+            Button b = button(labels[i], colors[i], 11);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, dp(38), 1f);
+            p.setMargins(dp(1),0,dp(1),dp(3));
+            toolsRow.addView(b,p);
+            b.setOnClickListener(v -> tool(action));
         }
+        root.addView(toolsRow, new LinearLayout.LayoutParams(-1, dp(41)));
+        keysArea = new LinearLayout(this);
+        keysArea.setOrientation(LinearLayout.VERTICAL);
+        root.addView(keysArea, new LinearLayout.LayoutParams(-1, -2));
+        renderKeys();
+        return root;
     }
 
-    @Override
-    public View onCreateInputView() {
-        return createKeyboard();
+    private Button button(String label, int color, int size) {
+        Button b = new Button(this);
+        b.setText(label); b.setTextSize(size); b.setTextColor(Color.WHITE);
+        b.setAllCaps(false); b.setPadding(0,0,0,0); b.setMinWidth(0); b.setMinimumWidth(0);
+        b.setMinHeight(0); b.setMinimumHeight(0); b.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(color); bg.setCornerRadius(dp(5));
+        b.setBackground(bg);
+        return b;
     }
 
-    private View createKeyboard() {
-        keyboard = new LinearLayout(this);
-        keyboard.setOrientation(LinearLayout.VERTICAL);
-        keyboard.setPadding(2, 3, 2, 3);
-        keyboard.setBackgroundColor(Color.rgb(225, 230, 238));
-
-        addRow(new String[]{
-            "Paste", "Copy", "Undo", "Redo", "زبان", "⌫"
-        });
-
-        if (persian) {
-            addRow(new String[]{
-                "ض","ص","ث","ق","ف","غ","ع","ه","خ","ح","ج"
-            });
-            addRow(new String[]{
-                "ش","س","ی","ب","ل","ا","ت","ن","م","ک","گ"
-            });
-            addRow(new String[]{
-                "ظ","ط","ز","ر","ذ","د","پ","و","چ","ژ"
-            });
+    private void renderKeys() {
+        keysArea.removeAllViews();
+        String[][] rows;
+        if (symbols) {
+            rows = new String[][] {
+                {"1","2","3","4","5","6","7","8","9","0"},
+                {"@","#","$","%","&","-","+","(",")","/"},
+                {"=","*","\"","'",":",";","!","?","⌫"},
+                {"ABC",",","🌐","space",".","↵"}
+            };
+        } else if (persian) {
+            rows = new String[][] {
+                {"ض","ص","ث","ق","ف","غ","ع","ه","خ","ح","ج"},
+                {"ش","س","ی","ب","ل","ا","ت","ن","م","ک","گ"},
+                {"⇧","ظ","ط","ز","ر","ذ","د","پ","و","⌫"},
+                {"?123",",","🌐","space",".","↵"}
+            };
         } else {
-            addRow(new String[]{
-                "q","w","e","r","t","y","u","i","o","p"
-            });
-            addRow(new String[]{
-                "a","s","d","f","g","h","j","k","l"
-            });
-            addRow(new String[]{
-                "z","x","c","v","b","n","m"
-            });
+            rows = new String[][] {
+                {"q","w","e","r","t","y","u","i","o","p"},
+                {"a","s","d","f","g","h","j","k","l"},
+                {"⇧","z","x","c","v","b","n","m","⌫"},
+                {"?123",",","🌐","space",".","↵"}
+            };
         }
-
-        addRow(new String[]{
-            "←","↑","↓","→","،",".","؟","Space","Enter"
-        });
-
-        return keyboard;
+        for (int r=0;r<rows.length;r++) {
+            LinearLayout line = new LinearLayout(this);
+            line.setOrientation(LinearLayout.HORIZONTAL);
+            line.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(46));
+            lp.setMargins(0,dp(1),0,dp(1));
+            keysArea.addView(line, lp);
+            for (String key : rows[r]) {
+                int weight = key.equals("space") ? 4 : (key.equals("↵") || key.equals("⌫") || key.equals("?123") || key.equals("⇧") || key.equals("🌐") ? 1.35f : 1f);
+                int col = key.equals("↵") ? 0xff0f766e : (key.equals("⌫") || key.equals("⇧") || key.equals("?123") || key.equals("🌐") ? 0xff475569 : 0xff334155);
+                String shown = key.equals("space") ? "فاصله" : key;
+                Button b = button(shown, col, key.equals("space") ? 12 : 16);
+                LinearLayout.LayoutParams kp = new LinearLayout.LayoutParams(0, -1, weight);
+                kp.setMargins(dp(1),dp(1),dp(1),dp(1));
+                line.addView(b,kp);
+                b.setOnClickListener(v -> press(key));
+            }
+        }
     }
 
-    private void addRow(String[] keys) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER);
-
-        for (String key : keys) {
-            Button button = new Button(this);
-            button.setText(key);
-            button.setAllCaps(false);
-            button.setTextSize(key.length() > 3 ? 10 : 15);
-            button.setPadding(0, 0, 0, 0);
-
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(Color.WHITE);
-            bg.setCornerRadius(6);
-            bg.setStroke(1, Color.LTGRAY);
-            button.setBackground(bg);
-
-            LinearLayout.LayoutParams lp =
-                new LinearLayout.LayoutParams(0, 43, 1);
-
-            lp.setMargins(1, 2, 1, 2);
-            row.addView(button, lp);
-            button.setOnClickListener(v -> pressKey(key));
-        }
-
-        keyboard.addView(row);
-    }
-
-    private void recordEdit(String before, String after) {
-        undoStack.push(new Edit(before, after));
-
-        while (undoStack.size() > 100) {
-            undoStack.removeLast();
-        }
-
-        redoStack.clear();
-    }
-
-    private void insertText(String text) {
+    private void tool(String action) {
         InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
-
-        CharSequence selected = ic.getSelectedText(0);
-        String before = selected == null ? "" : selected.toString();
-
-        recordEdit(before, text);
-        ic.commitText(text, 1);
-    }
-
-    private void undo() {
-        InputConnection ic = getCurrentInputConnection();
-        if (ic == null || undoStack.isEmpty()) return;
-
-        Edit edit = undoStack.pop();
-
-        if (edit.after.length() > 0) {
-            ic.deleteSurroundingText(edit.after.length(), 0);
-        }
-
-        if (edit.before.length() > 0) {
-            ic.commitText(edit.before, 1);
-        }
-
-        redoStack.push(edit);
-    }
-
-    private void redo() {
-        InputConnection ic = getCurrentInputConnection();
-        if (ic == null || redoStack.isEmpty()) return;
-
-        Edit edit = redoStack.pop();
-
-        if (edit.before.length() > 0) {
-            ic.deleteSurroundingText(edit.before.length(), 0);
-        }
-
-        if (edit.after.length() > 0) {
-            ic.commitText(edit.after, 1);
-        }
-
-        undoStack.push(edit);
-    }
-
-    private void pressKey(String key) {
-        InputConnection ic = getCurrentInputConnection();
-        if (ic == null) return;
-
-        switch (key) {
-            case "زبان":
-                persian = !persian;
-                setInputView(createKeyboard());
-                return;
-
-            case "Undo":
-                undo();
-                return;
-
-            case "Redo":
-                redo();
-                return;
-
-            case "⌫":
-                ic.deleteSurroundingText(1, 0);
-                return;
-
-            case "Space":
-                insertText(" ");
-                return;
-
-            case "Enter":
-                ic.sendKeyEvent(new KeyEvent(
-                    KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
-                return;
-
-            case "←":
-                ic.sendKeyEvent(new KeyEvent(
-                    KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT));
-                return;
-
-            case "→":
-                ic.sendKeyEvent(new KeyEvent(
-                    KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT));
-                return;
-
-            case "↑":
-                ic.sendKeyEvent(new KeyEvent(
-                    KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP));
-                return;
-
-            case "↓":
-                ic.sendKeyEvent(new KeyEvent(
-                    KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN));
-                return;
-
-            case "Paste":
-                ClipboardManager cm =
-                    (ClipboardManager) getSystemService(
-                        Context.CLIPBOARD_SERVICE);
-
+        switch (action) {
+            case "Paste": {
+                ClipboardManager cm = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
                 if (cm != null && cm.hasPrimaryClip()) {
-                    ClipData clip = cm.getPrimaryClip();
-
-                    if (clip != null && clip.getItemCount() > 0) {
-                        CharSequence text =
-                            clip.getItemAt(0).coerceToText(this);
-
-                        if (text != null) insertText(text.toString());
+                    ClipData d = cm.getPrimaryClip();
+                    if (d != null && d.getItemCount()>0) {
+                        CharSequence t = d.getItemAt(0).coerceToText(this);
+                        if (t != null) ic.commitText(t,1);
                     }
-                }
-                return;
-
-            case "Copy":
-                CharSequence selected = ic.getSelectedText(0);
-
-                if (selected != null && selected.length() > 0) {
-                    ClipboardManager clipboard =
-                        (ClipboardManager) getSystemService(
-                            Context.CLIPBOARD_SERVICE);
-
-                    if (clipboard != null) {
-                        clipboard.setPrimaryClip(
-                            ClipData.newPlainText("Fkksf", selected));
-                    }
-                }
-                return;
-
-            default:
-                insertText(key);
-                return;
+                } break;
+            }
+            case "Copy": {
+                CharSequence s = ic.getSelectedText(0);
+                if (s != null) {
+                    ClipboardManager cm = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("Fkksf",s));
+                } break;
+            }
+            case "Undo":
+                if (!undo.isEmpty()) { String s=undo.pop(); ic.deleteSurroundingText(s.length(),0); redo.push(s); } break;
+            case "Redo":
+                if (!redo.isEmpty()) { String s=redo.pop(); ic.commitText(s,1); undo.push(s); } break;
+            case "←": ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_LEFT)); break;
+            case "→": ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT)); break;
+            case "↑": ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_UP)); break;
+            case "↓": ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_DOWN)); break;
+            case "زبان": persian=!persian; symbols=false; renderKeys(); break;
         }
+    }
+
+    private void press(String key) {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return;
+        if (key.equals("🌐")) { persian=!persian; symbols=false; renderKeys(); return; }
+        if (key.equals("?123")) { symbols=true; renderKeys(); return; }
+        if (key.equals("ABC")) { symbols=false; renderKeys(); return; }
+        if (key.equals("⇧")) { shifted=!shifted; renderKeys(); return; }
+        if (key.equals("⌫")) {
+            CharSequence before=ic.getTextBeforeCursor(1,0);
+            if (before!=null && before.length()>0) {
+                lastDeleted=before.toString(); undo.push(lastDeleted);
+                ic.deleteSurroundingText(1,0);
+            } else ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DEL));
+            return;
+        }
+        if (key.equals("↵")) {
+            EditorInfo info=getCurrentInputEditorInfo();
+            if (info!=null && (info.imeOptions & (EditorInfo.IME_FLAG_NO_ENTER_ACTION|EditorInfo.IME_MASK_ACTION)) != EditorInfo.IME_ACTION_NONE) {
+                ic.performEditorAction(info.imeOptions & EditorInfo.IME_MASK_ACTION);
+            } else ic.commitText("\\n",1);
+            return;
+        }
+        if (key.equals("space")) { ic.commitText(" ",1); shifted=false; return; }
+        if (key.equals("," ) || key.equals(".")) { ic.commitText(key,1); shifted=false; return; }
+        String out=key;
+        if (shifted && key.length()==1 && key.matches("[a-z]")) out=key.toUpperCase();
+        ic.commitText(out,1);
+        shifted=false;
     }
 }
